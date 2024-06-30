@@ -531,6 +531,10 @@ if(LOVR_ENABLE_HEADSET)
     target_sources(lovr PRIVATE src/modules/headset/headset_simulator.c)
   endif()
 else()
+  target_sources(lovr PRIVATE
+    src/modules/headset/headset.c
+  )
+  
   target_compile_definitions(lovr PRIVATE LOVR_DISABLE_HEADSET)
 endif()
 
