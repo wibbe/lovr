@@ -2,58 +2,90 @@
 #include "event/event.h"
 #include "core/os.h"
 #include "util.h"
-#include "boot.lua.h"
+#include "modules/graphics/graphics.h"
+#include "modules/system/system.h"
+#include "modules/event/event.h"
+#include "modules/filesystem/filesystem.h"
 #include <lualib.h>
 #include <stdbool.h>
 #include <string.h>
 #include <stdlib.h>
 
-static void run(void* T) {
-  while (luax_resume(T, 0) == LUA_YIELD) {
-    os_sleep(0.);
-  }
-}
-
 int main(int argc, char** argv) {
-  os_init();
+    os_init();
+    lovrFilesystemInit();
 
-  for (;;) {
-    lua_State* L = luaL_newstate();
-    luax_setmainthread(L);
-    luaL_openlibs(L);
-    luax_preload(L);
+    char bundle_path[LOVR_PATH_MAX];
+    const char* bundle_root;
 
-    lua_newtable(L);
-    static Variant cookie;
-    luax_pushvariant(L, &cookie);
-    lua_setfield(L, -2, "restart");
-    for (int i = 0; i < argc; i++) {
-      lua_pushstring(L, argv[i]);
-      lua_rawseti(L, -2, i);
-    }
-    lua_setglobal(L, "arg");
+    char exe_path[LOVR_PATH_MAX];
+    const char* exe_root;
 
-    lua_pushcfunction(L, luax_getstack);
-    if (luaL_loadbuffer(L, (const char*) etc_boot_lua, etc_boot_lua_len, "@boot.lua") || lua_pcall(L, 0, 1, -2)) {
-      fprintf(stderr, "%s\n", lua_tostring(L, -1));
-      os_destroy();
-      return 1;
+    // Try and mount any bundled zip
+    if (lovrFilesystemGetBundlePath(bundle_path, sizeof(bundle_path), &bundle_root)) {
+        printf("Mounting '%s' / '%s'\n", bundle_path, bundle_root);
+        bool mounted = lovrFilesystemMount(bundle_path, NULL, true, bundle_root);
+        if (mounted) {
+            printf("  Mounted!\n");
+        }
     }
 
-    lua_State* T = lua_tothread(L, -1);
-    lovrSetLogCallback(luax_vlog, T);
-    lovrTry(run, T, luax_vthrow, T);
+    // Mount 
+    lovrFilesystemGetWorkingDirectory(exe_path, sizeof(exe_path));
+    lovrFilesystemMount(exe_path, NULL, true, NULL);
+    printf("Exe Path: '%s'\n", exe_path);
 
-    if (lua_type(T, 1) == LUA_TSTRING && !strcmp(lua_tostring(T, 1), "restart")) {
-      luax_checkvariant(T, 2, &cookie);
-      if (cookie.type == TYPE_OBJECT) memset(&cookie, 0, sizeof(cookie));
-      lua_close(L);
-      continue;
-    } else {
-      int status = lua_tointeger(T, 1);
-      lua_close(L);
-      os_destroy();
-      return status;
+    size_t content_size;
+    char* content = lovrFilesystemRead("arg.lua", &content_size);
+    printf("%s", content);
+
+
+
+    GraphicsConfig config = {
+        .debug = false,
+        .vsync = false,
+        .stencil = false,
+        .antialias = true
+    };
+    lovrGraphicsInit(&config);
+    lovrEventInit();
+
+    os_window_config window = {
+        .width = 480 * 3,
+        .height = 270 * 3,
+        .fullscreen = false,
+        .resizable = true,
+        .title = "Tiny Wars",
+    };
+
+    lovrSystemOpenWindow(&window);
+
+    float color[4] = { 0.3f, 0.4f, 0.7f, 1.0f };
+    lovrGraphicsSetBackgroundColor(color);
+
+
+    bool running = true;
+    while (lovrSystemIsWindowOpen() && running) {
+        lovrSystemPollEvents();
+
+        Event event;
+        while (lovrEventPoll(&event)) {
+            if (event.type == EVENT_QUIT) {
+                running = false;
+            }
+        }
+
+        Pass *stack[8];
+        Pass* pass = lovrGraphicsGetWindowPass();
+        stack[0] = pass;
+
+        lovrGraphicsSubmit(stack, 1);
+        lovrGraphicsPresent();
     }
-  }
+
+
+    lovrEventDestroy();
+    lovrGraphicsDestroy();
+    lovrFilesystemDestroy();
+    os_destroy();
 }
